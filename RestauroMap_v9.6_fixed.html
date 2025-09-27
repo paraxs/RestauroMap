@@ -647,9 +647,24 @@
                         if (!db.objectStoreNames.contains('areas')) db.createObjectStore('areas', { keyPath: 'id', autoIncrement: true }).createIndex('projekt_id_idx', 'projekt_id');
                         if (!db.objectStoreNames.contains('eintraege')) db.createObjectStore('eintraege', { keyPath: 'id', autoIncrement: true }).createIndex('area_id_idx', 'area_id');
                     };
-                    request.onblocked = () => ui.showToast('DB blockiert. Bitte andere Tabs schließen.', 'error');
-                    request.onsuccess = e => { state.db = e.target.result; resolve(state.db); };
-                    request.onerror = e => reject(e.target.errorCode);
+                    request.onblocked = () => {
+                        console.error("IndexedDB blocked. Please close other tabs with this application open.");
+                        ui.showToast('Ein Datenbank-Konflikt ist aufgetreten. Bitte schließen Sie alle anderen Tabs, in denen diese Anwendung geöffnet ist, und laden Sie die Seite neu.', 'error', 10000);
+                        reject(new Error('Database blocked'));
+                    };
+                    request.onsuccess = e => {
+                        state.db = e.target.result;
+                        // Add a general error handler for the database connection
+                        state.db.onerror = event => {
+                            console.error(`Database error: ${event.target.errorCode}`);
+                            ui.showToast('Ein unerwarteter Datenbankfehler ist aufgetreten.', 'error');
+                        };
+                        resolve(state.db);
+                    };
+                    request.onerror = e => {
+                        console.error("Database initialization error:", e.target.error);
+                        reject(e.target.error);
+                    };
                 });
             };
             database.getStore = (name, mode = 'readonly') => state.db.transaction(name, mode).objectStore(name);
@@ -809,17 +824,33 @@ actions.svgDataUrlToPngDataUrl = function(svgDataUrl, size=512) {
                 if (!(await ui.confirmDanger(`Wollen Sie das Projekt "${name}" wirklich löschen?`))) return;
                 ui.showLoader();
                 try {
-                    const areas = await actions.getIndexAll('areas', 'projekt_id_idx', id);
-                    for (const area of areas) {
-                        const entries = await actions.getIndexAll('eintraege', 'area_id_idx', area.id);
-                        for (const entry of entries) await actions.delete('eintraege', entry.id);
-                        await actions.delete('areas', area.id);
+                    // Step 1: Collect all IDs to be deleted outside of a transaction.
+                    const areasToDelete = await actions.getIndexAll('areas', 'projekt_id_idx', id);
+                    const areaIdsToDelete = areasToDelete.map(a => a.id);
+                    const entryIdsToDelete = [];
+                    for (const areaId of areaIdsToDelete) {
+                        const entries = await actions.getIndexAll('eintraege', 'area_id_idx', areaId);
+                        entries.forEach(e => entryIdsToDelete.push(e.id));
                     }
-                    await actions.delete('projekte', id);
+
+                    // Step 2: Perform all deletions in a single transaction.
+                    const tx = state.db.transaction(['projekte', 'areas', 'eintraege'], 'readwrite');
+                    entryIdsToDelete.forEach(id => tx.objectStore('eintraege').delete(id));
+                    areaIdsToDelete.forEach(id => tx.objectStore('areas').delete(id));
+                    tx.objectStore('projekte').delete(id);
+
+                    await new Promise((resolve, reject) => {
+                        tx.oncomplete = resolve;
+                        tx.onerror = e => reject(e.target.error);
+                    });
+
                     ui.showToast("Projekt gelöscht.", "success");
                     await navigation.to('page-projects');
-                } catch (err) { ui.showToast("Löschen fehlgeschlagen", "error"); }
-                finally { ui.hideLoader(); }
+                } catch (err) {
+                    ui.showToast(`Löschen fehlgeschlagen: ${err.message}`, "error");
+                } finally {
+                    ui.hideLoader();
+                }
             };
 
             actions.createArea = async (name, wichtigkeit) => {
@@ -842,13 +873,25 @@ actions.svgDataUrlToPngDataUrl = function(svgDataUrl, size=512) {
                 if (!(await ui.confirmDanger("Soll dieser Bereich mit allen Einträgen wirklich gelöscht werden?"))) return;
                 ui.showLoader();
                 try {
-                    const entries = await actions.getIndexAll('eintraege', 'area_id_idx', id);
-                    for (const entry of entries) await actions.delete('eintraege', entry.id);
-                    await actions.delete('areas', id);
+                    const entriesToDelete = await actions.getIndexAll('eintraege', 'area_id_idx', id);
+                    const entryIdsToDelete = entriesToDelete.map(e => e.id);
+
+                    const tx = state.db.transaction(['areas', 'eintraege'], 'readwrite');
+                    entryIdsToDelete.forEach(id => tx.objectStore('eintraege').delete(id));
+                    tx.objectStore('areas').delete(id);
+
+                    await new Promise((resolve, reject) => {
+                        tx.oncomplete = resolve;
+                        tx.onerror = e => reject(e.target.error);
+                    });
+
                     ui.showToast("Bereich gelöscht.", "success");
                     await navigation.to('page-cockpit', state.currentProjectId);
-                } catch (err) { ui.showToast("Löschen fehlgeschlagen", "error"); }
-                finally { ui.hideLoader(); }
+                } catch (err) {
+                    ui.showToast(`Löschen fehlgeschlagen: ${err.message}`, "error");
+                } finally {
+                    ui.hideLoader();
+                }
             };
 
             actions.deleteEntry = async id => {
