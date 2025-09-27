@@ -3,8 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>RestauroMap Professional v9.4 (Apple Design)</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <title>DokuMark</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#007aff">
+    <script src="jspdf.umd.min.js"></script>
     <style>
         /* Apple-inspired Design System */
         :root {
@@ -1728,6 +1732,17 @@ return distToPerimeter <= Math.max(m, thickness) || (inside && distToPerimeter <
         });
     </script>
 
-    <div class="app-footer" aria-hidden="true">© Kofler e.U. • RestauroMap v9.6</div>
+    <div class="app-footer" aria-hidden="true">© Kofler e.U. • DokuMark</div>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').then(registration => {
+                    console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                }, err => {
+                    console.log('ServiceWorker registration failed: ', err);
+                });
+            });
+        }
+    </script>
 </body>
 </html>
