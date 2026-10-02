@@ -1,6 +1,7 @@
-const CACHE_NAME = 'dokumap-cache-v1';
+const CACHE_NAME = 'dokumark-cache-v10-20261002';
 const urlsToCache = [
   './DokuMark.html',
+  './manifest.json',
   './jspdf.umd.min.js',
   './icons/icon-192x192.png',
   './icons/icon-512x512.png'
@@ -41,7 +42,7 @@ self.addEventListener('activate', event => {
     caches.keys().then(cacheNames => {
       return Promise.all(
         cacheNames.map(cacheName => {
-          if (cacheWhitelist.indexOf(cacheName) === -1) {
+          if (/^(dokumap|dokumark)-cache-/.test(cacheName) && cacheWhitelist.indexOf(cacheName) === -1) {
             return caches.delete(cacheName);
           }
         })
