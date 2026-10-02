@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dokumark-cache-v10-20261002';
+const CACHE_NAME = 'dokumark-cache-v10-20261002-mobile2';
 const urlsToCache = [
   './DokuMark.html',
   './manifest.json',

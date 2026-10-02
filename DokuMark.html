@@ -428,6 +428,31 @@
 @media (max-width: 480px) {
   .action-bar .button { max-width: none; flex: 1 1 auto; }
 }
+
+/* Compact page controls; full storage details remain available on demand. */
+.cockpit-primary-actions { display:flex; gap:4px; flex-shrink:0; }
+.cockpit-tools { display:contents; }
+.cockpit-tools > summary { display:none; }
+.project-status-row { display:flex; align-items:center; gap:8px; padding:0 12px; min-height:26px; flex-shrink:0; background:var(--bg-elevated); }
+.storage-secondary { position:relative; min-width:0; flex:1; color:var(--text-secondary); font-size:12px; }
+.storage-secondary > summary { cursor:pointer; padding:6px 0; }
+.storage-secondary > p { position:absolute; top:100%; left:0; right:0; z-index:950; background:var(--bg-elevated); padding:12px; margin:0; border:1px solid var(--gray-4); border-radius:8px; box-shadow:var(--shadow-md); }
+.storage-secondary.has-storage-error { color:var(--red-primary); }
+body.td-unified .geometry-check { border:0; background:#fff1cf; color:#704000; font:inherit; font-size:12px; padding:0 4px; min-height:44px; cursor:pointer; }
+@media (max-width:600px) {
+  #page-cockpit > .header, #page-details > .header { flex-wrap:nowrap; gap:6px; padding:4px 10px; position:relative; z-index:960; }
+  #page-cockpit .header-title, #page-details .header-title { min-width:0; font-size:16px; }
+  #page-details .header-right { flex:0 0 auto; width:auto; }
+  #page-details .header-right .button, .cockpit-primary-actions .button { white-space:nowrap; padding:6px 8px; font-size:13px; min-width:44px; min-height:44px; }
+  .cockpit-tools { display:block; flex:0 0 44px; }
+  .cockpit-tools > summary { display:flex; align-items:center; justify-content:center; list-style:none; width:44px; height:44px; font-size:26px; cursor:pointer; border-radius:10px; background:var(--gray-5); }
+  .cockpit-tools > summary::-webkit-details-marker { display:none; }
+  .cockpit-tools > .header-right { display:none; position:absolute; top:100%; right:10px; left:10px; padding:10px; background:var(--bg-elevated); border:1px solid var(--gray-4); border-radius:12px; box-shadow:var(--shadow-md); gap:6px; flex-wrap:wrap; }
+  .cockpit-tools[open] > .header-right { display:flex; }
+  #page-details .action-bar { gap:6px; padding:6px 10px calc(6px + var(--safe-area-bottom)); flex-wrap:nowrap; }
+  #page-details .action-bar .button { padding:8px 6px; font-size:14px; min-width:0; min-height:44px; }
+}
+
 </style>
   <style id="turmdecker-unified-inline">
 /* Turmdecker Unified Tool Theme */
@@ -681,17 +706,22 @@ html[data-theme="dark"] body.td-unified textarea {
                 <button id="btn-back-to-projects" class="button-icon" aria-label="Zurück zur Projektliste">‹</button>
             </div>
             <span id="cockpit-title" class="header-title">Projekt</span>
-            <div class="header-right">
+            <div class="cockpit-primary-actions">
+                <button id="toggle-mode-btn" class="button">+ Bereich</button>
+                <button id="btn-finish-drawing" class="button button-secondary" style="display:none">✓ Fertig</button>
+            </div>
+            <details id="cockpit-tools" class="cockpit-tools">
+                <summary aria-label="Projektwerkzeuge" title="PDF, Bereiche und Zoom">⋯</summary>
+                <div class="header-right">
                 <button id="btn-export-pdf" class="button button-secondary" style="padding: 8px 12px; font-size: 14px;">PDF</button>
                 <button id="btn-area-list" class="button button-secondary" style="padding: 8px 12px; font-size: 14px;">📋 Bereiche</button>
-                <button id="toggle-mode-btn" class="button" style="padding: 8px 12px; font-size: 14px; min-width: 100px;">[+] Bereich</button>
                 <button id="btn-fit-to-screen" class="button-icon" aria-label="Bild anpassen" title="Bild anpassen">🔍</button>
                 <button id="btn-zoom-out" class="button-icon" aria-label="Herauszoomen" title="Herauszoomen">➖</button>
                 <button id="btn-zoom-in" class="button-icon" aria-label="Hineinzoomen" title="Hineinzoomen">➕</button>
-                <button id="btn-finish-drawing" class="button button-secondary" style="display:none; padding: 8px 12px; font-size: 14px;">✓ Fertig</button>
-            </div>
+                </div>
+            </details>
         </div>
-        <div class="storage-secondary" role="status" style="padding:6px 16px;font-size:12px;color:var(--text-secondary)"></div><div class="content cockpit-content">
+        <div class="project-status-row"><details class="storage-secondary"><summary></summary><p></p></details><button id="btn-check-geometry" class="geometry-check" aria-live="polite" hidden></button></div><div class="content cockpit-content">
             <canvas id="main-canvas"></canvas>
         </div>
     </div>
@@ -706,7 +736,7 @@ html[data-theme="dark"] body.td-unified textarea {
                 <button id="btn-delete-area" class="button button-destructive" style="padding: 8px 12px; font-size: 14px;">Löschen</button>
             </div>
         </div>
-        <div class="storage-secondary" role="status" style="padding:6px 16px;font-size:12px;color:var(--text-secondary)"></div><div class="content" id="detail-list-container"></div>
+        <div class="project-status-row"><details class="storage-secondary"><summary></summary><p></p></details></div><div class="content" id="detail-list-container"></div>
         <div class="action-bar">
             <input type="file" id="foto-camera-input" accept="image/*" capture="environment" style="display:none;">
             <input type="file" id="foto-gallery-input" accept="image/*" style="display:none;">
@@ -1496,7 +1526,11 @@ html[data-theme="dark"] body.td-unified textarea {
                 document.getElementById('storage-compact-status').textContent=state.deviceFolder
                     ? `Browser · ${failed ? 'Ordner prüfen' : folderStatus.startsWith('geprüft') ? 'Ordner gesichert' : 'Ordner ausstehend'}`
                     : 'Hauptspeicher: Browser';
-                document.querySelectorAll('.storage-secondary').forEach(el=>{el.textContent=status.textContent;});
+                document.querySelectorAll('.storage-secondary').forEach(el=>{
+                    el.querySelector('summary').textContent=document.getElementById('storage-compact-status').textContent;
+                    el.querySelector('p').textContent=status.textContent;
+                    el.classList.toggle('has-storage-error',failed);
+                });
                 document.getElementById('btn-device-folder').hidden=typeof window.showDirectoryPicker!=='function';
                 for (const id of ['btn-folder-sync','btn-folder-disconnect']) document.getElementById(id).hidden=!state.deviceFolder;
             };
@@ -2371,6 +2405,8 @@ actions.confirmNewEntry = async e => {
 // Integrity check button and modal close
                 document.getElementById('btn-close-integrity')?.addEventListener('click', () => ui.hideModal('integrity-modal'));
 ui.showPage = pageId => {
+                document.querySelectorAll('.storage-secondary').forEach(el=>{el.open=false;});
+                if(window.innerWidth<=600)document.getElementById('cockpit-tools').open=false;
     if (pageId !== 'page-details') document.getElementById('detail-list-container').replaceChildren();
     if (pageId === 'page-projects') {
         if (state.activeImage) state.activeImage.removeAttribute('src'); state.activeImage = null; state.allProjectAreas = [];
@@ -2416,7 +2452,10 @@ ui.showPage = pageId => {
                 if (state.activeImage) state.activeImage.removeAttribute('src');
                 state.activeImage = img; state.allProjectAreas = areas; editor.init();
                 const invalid = areas.filter(area => { try { actions.validateGeometry(area.coords, {width: img.naturalWidth, height: img.naturalHeight}); return false; } catch (_) { return true; } });
-                if (invalid.length) ui.showToast(`${invalid.length} ungültige Bereiche: in der Bereichsliste gezielt neu zeichnen.`, 'error', 8000);
+                const checkButton=document.getElementById('btn-check-geometry');
+                checkButton.hidden=!invalid.length;
+                checkButton.textContent=`⚠ ${invalid.length} ${invalid.length===1 ? 'Bereich' : 'Bereiche'} prüfen`;
+                checkButton.title='Vorhandene Geometrie prüfen und bei Bedarf neu zeichnen. Fotos und Notizen bleiben erhalten.';
                 return true;
             };
             ui.renderDetails = (area, eintraege) => {
@@ -2782,6 +2821,13 @@ ui.showPage = pageId => {
                 document.getElementById('btn-back-to-cockpit').addEventListener('click', () => navigation.to('page-cockpit', state.currentProjectId));
                 document.getElementById('btn-export-pdf').addEventListener('click', actions.exportPDF);
                 document.getElementById('btn-area-list').addEventListener('click', ui.showAreaListModal);
+                document.getElementById('btn-check-geometry').addEventListener('click', ui.showAreaListModal);
+                const tools=document.getElementById('cockpit-tools');
+                const updateTools=()=>{tools.open=window.innerWidth>600;};
+                updateTools(); window.addEventListener('resize',updateTools);
+                tools.addEventListener('click',e=>{if(window.innerWidth<=600 && e.target.closest('button'))tools.open=false;});
+                document.addEventListener('click',e=>{if(window.innerWidth<=600 && !tools.contains(e.target))tools.open=false;});
+                document.addEventListener('keydown',e=>{if(window.innerWidth<=600 && e.key==='Escape' && tools.open){tools.open=false;tools.querySelector('summary').focus();}});
                 document.getElementById('btn-close-area-list').addEventListener('click', ui.hideAreaListModal);
                 document.getElementById('btn-add-foto-camera').addEventListener('click', () => document.getElementById('foto-camera-input').click());
                 document.getElementById('btn-add-foto-gallery').addEventListener('click', () => document.getElementById('foto-gallery-input').click());
