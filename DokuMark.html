@@ -1979,7 +1979,11 @@ html[data-theme="dark"] body.td-unified textarea {
                     if (state.deviceFolder===folder) {
                         state.folderDirty=revision!==(state.folderRevision||0);
                         state.folderStatus=state.folderDirty ? 'Sicherung ausstehend (weitere Änderungen)' : `geprüft ${new Date().toLocaleTimeString('de-DE')} · max. 5 Sicherungen`;
-                        try { await actions.pruneFolderBackups(folder,verifiedName); }
+                        try {
+                            if(blob.size>IMPORT_LIMITS.fileBytes) throw new Error('Neue Sicherung überschreitet die Importgrenze; bisherige Historie bleibt erhalten.');
+                            await actions.validateBackupData(JSON.parse(await blob.text()));
+                            await actions.pruneFolderBackups(folder,verifiedName);
+                        }
                         catch(error) { state.folderStatus+=` · Historie nicht vollständig bereinigt: ${error.message}`; }
                     }
                     return true;
@@ -2072,15 +2076,20 @@ html[data-theme="dark"] body.td-unified textarea {
                 reader.onload = e => {
                     const img = new Image();
                     img.onload = () => {
-                        const MAX_WIDTH = 4096;
-                        let { width, height } = img;
-                        if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-                        const canvas = document.createElement('canvas');
-                        canvas.width = width; canvas.height = height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-                        ctx.drawImage(img, 0, 0, width, height);
-                        resolve(canvas.toDataURL('image/jpeg', 0.92));
+                        try {
+                            const scale=Math.min(1,4096/Math.max(img.naturalWidth,img.naturalHeight));
+                            const canvas=document.createElement('canvas');
+                            canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));
+                            canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+                            const ctx=canvas.getContext('2d');
+                            if(!ctx) throw new Error('Bildverarbeitung ist auf diesem Gerät nicht verfügbar.');
+                            ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+                            ctx.drawImage(img,0,0,canvas.width,canvas.height);
+                            const dataUrl=canvas.toDataURL('image/jpeg',0.92);
+                            if(!isSafeRasterImageDataUrl(dataUrl)) throw new Error('Bild konnte nicht in ein gültiges Speicherformat umgewandelt werden.');
+                            resolve(dataUrl);
+                        } catch(error) { reject(error); }
+                        finally { img.removeAttribute('src'); }
                     };
                     img.onerror = () => reject(new Error("Bild konnte nicht verarbeitet werden."));
                     img.src = e.target.result;
@@ -2278,7 +2287,7 @@ html[data-theme="dark"] body.td-unified textarea {
                     const snapshot = await actions.snapshot();
                     const {projekte: projects, areas, eintraege: entries, firmendaten: company} = snapshot;
                     const errors = [];
-                    try { await actions.validateBackupData({ projekte: projects, areas, eintraege: entries, firmendaten: company }, { decodeImages: false }); }
+                    try { await actions.validateBackupData({ projekte: projects, areas, eintraege: entries, firmendaten: company }); }
                     catch (error) { errors.push(error.message || String(error)); }
                     areas.forEach(area => { try { actions.validateGeometry(area.coords); } catch (error) { errors.push(`Bereich ${area.id} (${area.name}): ${error.message}`); } });
                     const el = document.getElementById('integrity-content');
@@ -2453,17 +2462,18 @@ actions.confirmNewEntry = async e => {
                 }, false);
             };
             actions.exportPDF = async () => {
+                const projectId=state.currentProjectId;
                 ui.showToast("PDF-Bericht wird erstellt...", "info");
                 ui.showLoader();
                 try {
                     if (typeof window.jspdf?.jsPDF !== 'function') throw new Error('Die PDF-Bibliothek fehlt. Bitte die aktuelle DokuMark.html verwenden.');
                     const { jsPDF } = window.jspdf;
                     const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-                    const project = await actions.getById('projekte', state.currentProjectId);
+                    const project = await actions.getById('projekte', projectId);
                     if (!project) throw new Error("Projekt nicht gefunden.");
 
                     const company = await actions.loadCompany();
-                    const areas = (await actions.getIndexAll('areas', 'projekt_id_idx', state.currentProjectId))
+                    const areas = (await actions.getIndexAll('areas', 'projekt_id_idx', projectId))
                         .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0) || a.id-b.id);
 
                     const margin = 14;
@@ -2497,13 +2507,20 @@ actions.confirmNewEntry = async e => {
                     let y = contentTop;
                     let headerCtx = { title: '', subtitle: '' };
 
+                    const fitLabel = (value,maxWidth) => {
+                        const text=sanitizeForPDF(value);
+                        if(doc.getTextWidth(text)<=maxWidth) return text;
+                        let first=doc.splitTextToSize(text,maxWidth)[0] || '';
+                        while(first && doc.getTextWidth(first+'...')>maxWidth) first=first.slice(0,-1);
+                        return first.trimEnd()+'...';
+                    };
                     const drawHeader = (title, subtitle = '') => {
                         headerCtx = { title, subtitle };
                         doc.setTextColor(...colorBrand).setFont('helvetica', 'bold').setFontSize(16);
-                        doc.text(sanitizeForPDF(title), margin, 22);
+                        doc.text(fitLabel(title,contentWidth*0.55), margin, 22);
                         if (subtitle) {
                             doc.setTextColor(...colorMuted).setFont('helvetica', 'normal').setFontSize(10);
-                            const s = sanitizeForPDF(subtitle);
+                            const s = fitLabel(subtitle,contentWidth*0.4);
                             doc.text(s, pageWidth - margin - doc.getTextWidth(s), 22);
                         }
                         doc.setDrawColor(...colorLine).setLineWidth(0.6).line(margin, 26, pageWidth - margin, 26);
@@ -2525,19 +2542,35 @@ actions.confirmNewEntry = async e => {
                     };
 
                     const drawMetaCard = (rows) => {
-                        const rowHeight = 6;
-                        const h = 10 + rows.length * rowHeight;
-                        ensureSpace(h + 4);
-                        doc.setFillColor(...colorCard).setDrawColor(...colorLine).roundedRect(margin, y, contentWidth, h, 2, 2, 'FD');
-                        let yy = y + 7;
-                        for (const row of rows) {
-                            doc.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...colorMuted);
-                            doc.text(`${sanitizeForPDF(row.label)}:`, margin + 4, yy);
-                            doc.setFont('helvetica', 'normal').setTextColor(...colorText);
-                            doc.text(sanitizeForPDF(row.value || '-'), margin + 34, yy);
-                            yy += rowHeight;
+                        const lineHeight=5, maxCardHeight=contentBottom-contentTop-4;
+                        const maxLines=Math.floor((maxCardHeight-11)/lineHeight);
+                        const prepared=[];
+                        doc.setFont('helvetica','normal').setFontSize(10);
+                        for(const row of rows) {
+                            const lines=doc.splitTextToSize(sanitizeForPDF(row.value || '-'),contentWidth-38);
+                            for(let offset=0;offset<lines.length;offset+=maxLines) prepared.push({label:row.label,lines:lines.slice(offset,offset+maxLines)});
                         }
-                        y += h + 4;
+                        let group=[],height=10;
+                        const drawGroup=()=> {
+                            if(!group.length) return;
+                            ensureSpace(height+4);
+                            doc.setFillColor(...colorCard).setDrawColor(...colorLine).roundedRect(margin,y,contentWidth,height,2,2,'FD');
+                            let yy=y+7;
+                            for(const row of group) {
+                                doc.setFont('helvetica','bold').setFontSize(10).setTextColor(...colorMuted);
+                                doc.text(`${sanitizeForPDF(row.label)}:`,margin+4,yy);
+                                doc.setFont('helvetica','normal').setTextColor(...colorText);
+                                row.lines.forEach((line,index)=>doc.text(line,margin+34,yy+index*lineHeight));
+                                yy+=row.lines.length*lineHeight+1;
+                            }
+                            y+=height+4; group=[]; height=10;
+                        };
+                        for(const row of prepared) {
+                            const rowHeight=row.lines.length*lineHeight+1;
+                            if(height+rowHeight>maxCardHeight) drawGroup();
+                            group.push(row); height+=rowHeight;
+                        }
+                        drawGroup();
                     };
 
                     const noteFont = { family: 'helvetica', style: 'normal', size: 10 };
@@ -2627,8 +2660,9 @@ actions.confirmNewEntry = async e => {
                             doc.setPage(i);
                             doc.setDrawColor(...colorLine).setLineWidth(0.3).line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
                             doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...colorMuted);
-                            doc.text(`${sanitizeForPDF(project.name)} | Seite ${i} von ${total}`, margin, pageHeight - 7.5);
-                            const right = sanitizeForPDF(brandLabel);
+                            const counter=` | Seite ${i} von ${total}`;
+                            doc.text(fitLabel(project.name,contentWidth*0.7-doc.getTextWidth(counter))+counter, margin, pageHeight - 7.5);
+                            const right = fitLabel(brandLabel,contentWidth*0.25);
                             doc.text(right, pageWidth - margin - doc.getTextWidth(right), pageHeight - 7.5);
                         }
                     };
@@ -2671,8 +2705,9 @@ actions.confirmNewEntry = async e => {
 
                     doc.setFont('helvetica', 'normal').setFontSize(12).setTextColor(...colorText);
                     const ortY = titleBottom + 7;
-                    const createdY = ortY + 7;
-                    doc.text(`Ort: ${sanitizeForPDF(project.ort || '-')}`, margin, ortY, { maxWidth: titleTextMaxWidth });
+                    const ortLines=doc.splitTextToSize(`Ort: ${sanitizeForPDF(project.ort || '-')}`,titleTextMaxWidth);
+                    const createdY=ortY+Math.max(7,ortLines.length*6);
+                    doc.text(ortLines, margin, ortY);
                     doc.text(`Erstellt am: ${new Date().toLocaleString('de-DE')}`, margin, createdY, { maxWidth: titleTextMaxWidth });
                     y = Math.max(contentTop, createdY + 8, titleLogoBottom + 6);
 
@@ -2684,26 +2719,24 @@ actions.confirmNewEntry = async e => {
                     ]);
 
                     if (company) {
+                        doc.setFont('helvetica','normal').setFontSize(10);
                         const companyLines = [
                             company.name ? `Firma: ${company.name}` : null,
                             company.email ? `E-Mail: ${company.email}` : null,
                             company.phone ? `Telefon: ${company.phone}` : null,
                             company.website ? `Website: ${company.website}` : null
-                        ].filter(Boolean).map(sanitizeForPDF);
+                        ].filter(Boolean).flatMap(line=>doc.splitTextToSize(sanitizeForPDF(line),contentWidth-8));
 
-                        if (companyLines.length > 0) {
-                            const h = 10 + companyLines.length * 6;
-                            ensureSpace(h + 4);
-                            doc.setFillColor(...colorCard).setDrawColor(...colorLine).roundedRect(margin, y, contentWidth, h, 2, 2, 'FD');
-                            doc.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...colorMuted);
-                            doc.text('Firmenangaben', margin + 4, y + 7);
-                            doc.setFont('helvetica', 'normal').setTextColor(...colorText);
-                            let yy = y + 13;
-                            for (const line of companyLines) {
-                                doc.text(line, margin + 4, yy);
-                                yy += 6;
-                            }
-                            y += h + 4;
+                        const linesPerCard=Math.floor((contentBottom-contentTop-20)/6);
+                        for(let offset=0;offset<companyLines.length;offset+=linesPerCard) {
+                            const chunk=companyLines.slice(offset,offset+linesPerCard),h=16+chunk.length*6;
+                            ensureSpace(h+4);
+                            doc.setFillColor(...colorCard).setDrawColor(...colorLine).roundedRect(margin,y,contentWidth,h,2,2,'FD');
+                            doc.setFont('helvetica','bold').setFontSize(10).setTextColor(...colorMuted);
+                            doc.text('Firmenangaben',margin+4,y+7);
+                            doc.setFont('helvetica','normal').setTextColor(...colorText);
+                            chunk.forEach((line,index)=>doc.text(line,margin+4,y+13+index*6));
+                            y+=h+4;
                         }
                     }
 
@@ -2815,10 +2848,10 @@ actions.confirmNewEntry = async e => {
             };
             ui.applyTheme = theme => {
                 document.documentElement.setAttribute('data-theme', theme);
-                localStorage.setItem('theme', theme);
+                try { localStorage.setItem('theme', theme); } catch (_) { /* Theme works even when optional storage is blocked. */ }
                 document.getElementById('theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌓';
             };
-            ui.toggleTheme = () => ui.applyTheme(localStorage.getItem('theme') === 'light' ? 'dark' : 'light');
+            ui.toggleTheme = () => ui.applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
 (function(el){ if(el) el.addEventListener('click', actions.validateData); })(document.getElementById('btn-validate-data'));
 // Integrity check button and modal close
                 document.getElementById('btn-close-integrity')?.addEventListener('click', () => ui.hideModal('integrity-modal'));
@@ -3147,7 +3180,7 @@ ui.showPage = pageId => {
                 state.pointer.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 editor.canvas.setPointerCapture(e.pointerId);
                 state.pointer.isDown = true;
-                state.pointer.didMove = false;
+                state.pointer.didMove = state.pointer.pointers.size>1;
                 state.pointer.lastDownTime = performance.now();
                 state.pointer.startClient = { x: e.clientX, y: e.clientY };
                 if (state.pointer.pointers.size === 1) {
@@ -3167,7 +3200,7 @@ ui.showPage = pageId => {
                 }
                 e.preventDefault();
                 state.pointer.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-                const dx = e.clientX - state.pointer.startClient.x; const dy = e.clientY - state.pointer.startClient.y; state.pointer.didMove = (Math.abs(dx) > state.pointer.moveThreshold || Math.abs(dy) > state.pointer.moveThreshold);
+                const dx = e.clientX - state.pointer.startClient.x; const dy = e.clientY - state.pointer.startClient.y; state.pointer.didMove = state.pointer.didMove || Math.abs(dx) > state.pointer.moveThreshold || Math.abs(dy) > state.pointer.moveThreshold;
                 if (state.pointer.mode === 'pan' && state.pointer.pointers.size === 1) {
                     editor.canvas.classList.add('panning-mode');
                     editor.pan(e.clientX - state.pointer.lastClient.x, e.clientY - state.pointer.lastClient.y);
@@ -3342,7 +3375,9 @@ ui.showPage = pageId => {
                 const setting = await actions.getById('einstellungen', 'device-folder');
                 state.deviceFolder = setting?.handle || null; state.folderStatus = state.deviceFolder ? 'Berechtigung/Sicherung ausstehend' : '';
                 actions.renderStorageStatus();
-                ui.applyTheme(localStorage.getItem('theme') || 'light');
+                let theme='light';
+                try { theme=localStorage.getItem('theme') || theme; } catch (_) {}
+                ui.applyTheme(theme);
                 bindEventListeners();
                 navigation.to('page-projects');
             }).catch(err => { ui.showToast("Schwerer Datenbankfehler. App neu laden.", "error"); });

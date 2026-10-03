@@ -63,7 +63,7 @@ Der Import prüft die Daten und legt Projekte mit neuen IDs an. Bestehende Proje
 
 Über **Speicher & Archiv → Geräteordner wählen** kann ausdrücklich ein Ordner für Sicherungen ausgewählt werden, sofern der Browser die benötigte Dateisystem-API unterstützt. **Der Browser bleibt der Hauptspeicher**; der Ordner enthält Sicherungsdateien.
 
-Änderungen werden gebündelt und nach einem Fünf-Minuten-Intervall gesichert. **Ordner sichern** startet eine Sicherung unmittelbar. Nach erfolgreichem Schreiben und Rücklesen einer neuen Sicherung wird die eigene Gesamtbackup-Historie auf fünf Stände begrenzt. Archivdateien und fremde Dateien werden dabei nicht bereinigt. Bei Schreib- oder Prüfproblemen bleiben vorherige Sicherungen erhalten; der Status zeigt den Fehler an. Bei einem Bereinigungsfehler kann die Historie vorübergehend mehr als fünf Stände enthalten.
+Änderungen werden gebündelt und nach einem Fünf-Minuten-Intervall gesichert. **Ordner sichern** startet eine Sicherung unmittelbar. Nach erfolgreichem Schreiben und Rücklesen einer neuen Sicherung wird vor der Bereinigung auch ihre Rückimportierbarkeit geprüft. Erst dann wird die eigene Gesamtbackup-Historie auf fünf Stände begrenzt. Bei ungültigen Daten oder überschrittener Importgrenze bleibt die bisherige Historie erhalten. Archivdateien und fremde Dateien werden dabei nicht bereinigt. Bei Schreib- oder Prüfproblemen bleiben vorherige Sicherungen erhalten; der Status zeigt den Fehler an. Bei einem Bereinigungsfehler kann die Historie vorübergehend mehr als fünf Stände enthalten.
 
 Ohne Ordnerunterstützung stehen JSON-Download und Import weiterhin zur Verfügung. Ausstehende automatische Sicherungen benötigen eine laufende Anwendung; vor dem Schließen oder Gerätewechsel die Sicherung abschließen.
 
