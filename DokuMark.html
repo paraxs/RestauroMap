@@ -707,7 +707,7 @@ html[data-theme="dark"] body.td-unified textarea {
             </div>
             <span id="cockpit-title" class="header-title">Projekt</span>
             <div class="cockpit-primary-actions">
-                <button id="toggle-mode-btn" class="button">+ Bereich</button>
+                <button id="toggle-mode-btn" class="button">+ Punkt</button>
                 <button id="btn-finish-drawing" class="button button-secondary" style="display:none">✓ Fertig</button>
             </div>
             <details id="cockpit-tools" class="cockpit-tools">
@@ -1294,16 +1294,20 @@ html[data-theme="dark"] body.td-unified textarea {
             // Shared creation/import/audit geometry rules. Adjacent edges may meet only at their vertex.
             actions.validateGeometry = (points, bounds, path = 'Bereich') => {
                 const fail = reason => { throw new Error(`${path}: ${reason}`); };
-                if (!Array.isArray(points) || points.length < 3 || points.length > IMPORT_LIMITS.pointsPerArea) fail('3 bis 20000 Punkte erforderlich.');
+                if (!Array.isArray(points) || (points.length !== 1 && points.length < 3) || points.length > IMPORT_LIMITS.pointsPerArea) fail('Ein Markierungspunkt oder eine Fläche mit 3 bis 20000 Punkten erforderlich.');
                 const seen = new Set();
                 for (const p of points) {
-                    if (!isPlainObject(p) || !Number.isFinite(p.x) || !Number.isFinite(p.y)) fail('endliche x/y-Koordinaten erforderlich.');
-                    assertAllowedFields(p, ['x', 'y'], path);
+                    // Older drawings used native DOMPoints; their JSON form also includes z=0/w=1.
+                    const nativePoint = typeof DOMPointReadOnly !== 'undefined' && p instanceof DOMPointReadOnly;
+                    if ((!isPlainObject(p) && !nativePoint) || !Number.isFinite(p.x) || !Number.isFinite(p.y)) fail('endliche x/y-Koordinaten erforderlich.');
+                    assertAllowedFields(p, ['x', 'y', 'z', 'w'], path);
+                    if (('z' in p && p.z !== 0) || ('w' in p && p.w !== 1)) fail('zweidimensionale Bildkoordinaten erforderlich.');
                     if (p.x < 0 || p.y < 0 || (bounds && (p.x > bounds.width || p.y > bounds.height))) fail('Punkt liegt außerhalb des Bildes.');
                     const key = `${p.x}:${p.y}`;
                     if (seen.has(key)) fail('doppelte Punkte oder Nullkanten.');
                     seen.add(key);
                 }
+                if (points.length === 1) return true;
                 const cross = (a,b,c) => (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
                 const on = (a,b,p) => Math.abs(cross(a,b,p)) < 1e-9 && p.x >= Math.min(a.x,b.x)-1e-9 && p.x <= Math.max(a.x,b.x)+1e-9 && p.y >= Math.min(a.y,b.y)-1e-9 && p.y <= Math.max(a.y,b.y)+1e-9;
                 const intersects = (a,b,c,d) => {
@@ -1799,8 +1803,8 @@ html[data-theme="dark"] body.td-unified textarea {
                 }, false);
             };
             actions.createArea = async (name, wichtigkeit) => {
-                if (!state.drawingPoints || state.drawingPoints.length < 3) {
-                    ui.showToast("Mindestens 3 Punkte für einen Bereich nötig.", "error");
+                if (!state.drawingPoints || state.drawingPoints.length < 1) {
+                    ui.showToast("Bitte einen Markierungspunkt auf dem Bild setzen.", "error");
                     return false;
                 }
                 const projectId = state.currentProjectId;
@@ -2058,7 +2062,7 @@ actions.confirmNewEntry = async e => {
 
                     const company = await actions.loadCompany();
                     const areas = (await actions.getIndexAll('areas', 'projekt_id_idx', state.currentProjectId))
-                        .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+                        .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0) || a.id-b.id);
 
                     const margin = 14;
                     const pageWidth = doc.internal.pageSize.getWidth();
@@ -2444,6 +2448,7 @@ ui.showPage = pageId => {
                 }));
             };
             ui.renderCockpit = async (project, areas, navigationRequestId = null) => {
+                areas=[...areas].sort((a,b)=>new Date(a.created_at || 0)-new Date(b.created_at || 0) || a.id-b.id);
                 document.getElementById('cockpit-title').textContent = project.name || '';
                 if (!isSafeRasterImageDataUrl(project.imageUrl)) throw new Error('Projektbild hat eine ungültige oder nicht unterstützte Bildquelle.');
                 const img = new Image();
@@ -2455,7 +2460,7 @@ ui.showPage = pageId => {
                 const checkButton=document.getElementById('btn-check-geometry');
                 checkButton.hidden=!invalid.length;
                 checkButton.textContent=`⚠ ${invalid.length} ${invalid.length===1 ? 'Bereich' : 'Bereiche'} prüfen`;
-                checkButton.title='Vorhandene Geometrie prüfen und bei Bedarf neu zeichnen. Fotos und Notizen bleiben erhalten.';
+                checkButton.title='Vorhandene Geometrie prüfen und bei Bedarf durch einen Markierungspunkt ersetzen. Fotos und Notizen bleiben erhalten.';
                 return true;
             };
             ui.renderDetails = (area, eintraege) => {
@@ -2528,11 +2533,13 @@ ui.showPage = pageId => {
                     ctx.drawImage(img, 0, 0);
                     areas.forEach((area, index) => {
                         if (!Array.isArray(area.coords) || area.coords.length === 0 || !area.coords.every(p=>p && Number.isFinite(p.x) && Number.isFinite(p.y))) return;
+                        const color = {high:'#ff3b30',medium:'#ff9500',low:'#34c759'}[area.wichtigkeit] || '#ff9500';
+                        ctx.beginPath();
+                        area.coords.forEach((point,i)=>i===0 ? ctx.moveTo(point.x,point.y) : ctx.lineTo(point.x,point.y));
+                        ctx.closePath(); ctx.fillStyle=color; ctx.globalAlpha=0.15; ctx.fill(); ctx.globalAlpha=1;
+                        ctx.strokeStyle=color; ctx.lineWidth=Math.max(2,Math.min(img.width,img.height)*0.004); ctx.stroke();
                         const c = editor.getPolygonCentroid(area.coords), size = Math.max(20, Math.min(img.width,img.height)*0.025);
-                        ctx.beginPath(); ctx.arc(c.x, c.y, size, 0, 2*Math.PI); ctx.fillStyle = '#007aff'; ctx.fill();
-                        ctx.strokeStyle = 'white'; ctx.lineWidth = size/8; ctx.stroke();
-                        ctx.fillStyle='white'; ctx.font=`bold ${size*0.8}px ${getComputedStyle(document.body).fontFamily}`;
-                        ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(index+1, c.x, c.y);
+                        editor.drawPointMarker(ctx,c,index+1,size);
                     });
                     resolve(canvas);
                 };
@@ -2571,9 +2578,10 @@ ui.showPage = pageId => {
                 if (!areas || areas.length === 0) {
                     const empty = document.createElement('p'); empty.style.color = 'var(--text-tertiary)'; empty.textContent = 'Keine Bereiche vorhanden.'; c.appendChild(empty);
                 } else {
-                    areas.forEach(area => {
+                    areas.sort((a,b)=>new Date(a.created_at || 0)-new Date(b.created_at || 0) || a.id-b.id);
+                    areas.forEach((area,index) => {
                         const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-secondary'; button.style.justifyContent = 'flex-start'; button.dataset.id = String(area.id);
-                        const name = document.createTextNode(`${typeof area.name === 'string' ? area.name : ''} — `);
+                        const name = document.createTextNode(`${index+1}. ${typeof area.name === 'string' ? area.name : ''} — `);
                         const priority = document.createElement('span'); priority.style.cssText = 'color:var(--text-tertiary);font-size:12px;'; priority.textContent = ['high', 'medium', 'low'].includes(area.wichtigkeit) ? area.wichtigkeit : 'medium';
                         button.append(name, priority);
                         button.addEventListener('click', async e => { const id = Number(e.currentTarget.dataset.id); ui.hideAreaListModal(); await navigation.to('page-details', id); });
@@ -2581,12 +2589,12 @@ ui.showPage = pageId => {
                         try { actions.validateGeometry(area.coords, {width: state.activeImage?.naturalWidth, height: state.activeImage?.naturalHeight}); }
                         catch(error) {
                             const repair = document.createElement('button'); repair.className = 'button button-destructive';
-                            repair.textContent = `⚠ ${error.message} – Neu zeichnen`;
+                            repair.textContent = `⚠ ${error.message} – Punkt neu setzen`;
                             repair.onclick = async () => {
                                 ui.hideAreaListModal(); if (!(await navigation.to('page-cockpit', area.projekt_id))) return;
                                 editor.setDrawingMode(true); state.repairAreaId = area.id;
                                 document.getElementById('area-name').value = area.name; document.getElementById('area-wichtigkeit').value = area.wichtigkeit;
-                                ui.showToast('Ersatzkontur zeichnen. Bestehende Einträge bleiben erhalten.', 'info', 8000);
+                                ui.showToast('Ersatzpunkt auf dem Bild setzen. Bestehende Einträge bleiben erhalten.', 'info', 8000);
                             }; c.appendChild(repair);
                         }
                     });
@@ -2670,8 +2678,8 @@ ui.showPage = pageId => {
                 document.getElementById('toggle-mode-btn').classList.toggle('active', active);
                 editor.canvas.classList.toggle('drawing-mode', active);
                 const btn = document.getElementById('toggle-mode-btn'), finish = document.getElementById('btn-finish-drawing');
-                if (active) { finish.style.display='inline-flex'; btn.textContent='✖️ Abbrechen'; ui.showToast("Zeichnen: Tippen um Punkte zu setzen.", "info", 5000); }
-                else { finish.style.display='none'; btn.textContent='[+] Bereich'; state.drawingPoints=[]; state.repairAreaId=null; editor.draw(); }
+                if (active) { finish.style.display='none'; btn.textContent='✖️ Abbrechen'; ui.showToast("Einmal auf das Bild tippen, dann den Bereich benennen.", "info", 3500); }
+                else { finish.style.display='none'; btn.textContent='+ Punkt'; state.drawingPoints=[]; state.repairAreaId=null; editor.draw(); }
             };
             editor.draw = () => requestAnimationFrame(() => {
                 if (!state.activeImage) return;
@@ -2685,10 +2693,20 @@ ui.showPage = pageId => {
                 state.allProjectAreas.forEach((area, i) => editor.drawPolygon(area, false, i+1));
                 if (state.drawingPoints.length > 0) editor.drawPolygon({ coords: state.drawingPoints, wichtigkeit: 'medium' }, true);
             });
+            editor.drawPointMarker = (ctx, point, number, radius) => {
+                ctx.save(); ctx.beginPath(); ctx.arc(point.x,point.y,radius,0,2*Math.PI);
+                ctx.fillStyle='#007aff'; ctx.fill(); ctx.strokeStyle='white'; ctx.lineWidth=radius/6; ctx.stroke();
+                ctx.fillStyle='white'; const fontSize=Math.min(radius,2*radius/(String(number).length*0.65+1)); ctx.font=`bold ${fontSize}px ${getComputedStyle(document.body).fontFamily}`;
+                ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(number,point.x,point.y); ctx.restore();
+            };
             editor.drawPolygon = (area, isDrawing, number) => {
                 if (!Array.isArray(area.coords) || !area.coords.every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))) return;
                 const scale = state.transform.a, lineWidth = Math.max(2, 3 / scale);
                 editor.ctx.lineWidth = state.hoveredAreaId===area.id ? lineWidth*1.5 : lineWidth;
+                if(area.coords.length===1) {
+                    const markerNumber=number || (state.repairAreaId ? state.allProjectAreas.findIndex(item=>item.id===state.repairAreaId)+1 : state.allProjectAreas.length+1);
+                    editor.drawPointMarker(editor.ctx,area.coords[0],markerNumber,18/scale); return;
+                }
                 const color = {high:'rgba(255,59,48,0.8)', medium:'rgba(255,149,0,0.8)', low:'rgba(52,199,89,0.8)'}[area.wichtigkeit] || 'rgba(255,149,0,0.8)';
                 editor.ctx.strokeStyle = color;
                 editor.ctx.fillStyle = state.hoveredAreaId===area.id ? color.replace('0.8','0.3') : color.replace('0.8','0.15');
@@ -2722,13 +2740,17 @@ ui.showPage = pageId => {
                     state.pointer.mode = 'pan';
                     state.pointer.lastClient = { x: e.clientX, y: e.clientY };
                 } else if (state.pointer.pointers.size === 2) {
-                    state.pointer.mode = 'pinch';
+                    state.pointer.mode = 'pinch'; state.pointer.didMove=true;
                     const pts = [...state.pointer.pointers.values()];
                     state.pointer.startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
                 }
             };
             editor.handlePointerMove = e => {
-                if (!state.pointer.isDown || !state.pointer.pointers.has(e.pointerId) || state.isDrawing) return;
+                if (!state.pointer.isDown || !state.pointer.pointers.has(e.pointerId)) return;
+                if (state.isDrawing) {
+                    state.pointer.didMove=state.pointer.didMove || Math.abs(e.clientX-state.pointer.startClient.x)>state.pointer.moveThreshold || Math.abs(e.clientY-state.pointer.startClient.y)>state.pointer.moveThreshold;
+                    return;
+                }
                 e.preventDefault();
                 state.pointer.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 const dx = e.clientX - state.pointer.startClient.x; const dy = e.clientY - state.pointer.startClient.y; state.pointer.didMove = (Math.abs(dx) > state.pointer.moveThreshold || Math.abs(dy) > state.pointer.moveThreshold);
@@ -2753,7 +2775,7 @@ ui.showPage = pageId => {
                     }
                 } catch (_) {}
                 state.pointer.pointers.delete(e.pointerId);
-                if (!state.pointer.didMove) editor.handleCanvasClick(e);
+                if (e.type!=='pointercancel' && !state.pointer.didMove && state.pointer.pointers.size===0) editor.handleCanvasClick(e);
                 if (state.pointer.pointers.size < 2) state.pointer.mode = 'pan';
                 if (state.pointer.pointers.size < 1) {
                     state.pointer.isDown = false; state.pointer.mode = 'none';
@@ -2765,11 +2787,9 @@ ui.showPage = pageId => {
             editor.handleCanvasClick = e => {
                 const p = editor.getWorldCoords(e);
                 if (state.isDrawing) {
-                    if (state.drawingPoints.length >= 3) {
-                        const first = state.drawingPoints[0], dist = Math.hypot(p.x - first.x, p.y - first.y);
-                        if (dist < 32 / state.transform.a) { editor.finishDrawing(); return; }
-                    }
-                    state.drawingPoints.push(p); editor.draw();
+                    try { actions.validateGeometry([p], {width:state.activeImage.naturalWidth,height:state.activeImage.naturalHeight}); }
+                    catch(error) { ui.showToast(error.message,'error'); return; }
+                    state.drawingPoints=[p]; editor.draw(); editor.finishDrawing();
                 } else {
                     const clicked = [...state.allProjectAreas].reverse().find(area => editor.isPointInPolygon(p, area.coords));
                     if (clicked) navigation.to('page-details', clicked.id);
@@ -2806,9 +2826,13 @@ ui.showPage = pageId => {
                 try { actions.validateGeometry(state.drawingPoints, {width: state.activeImage?.naturalWidth, height: state.activeImage?.naturalHeight}); ui.showNewAreaModal(); }
                 catch(error) { ui.showToast(error.message, 'error'); }
             };
-            editor.isPointInPolygon = (p, poly) => { if (!Array.isArray(poly) || !poly.every(q => q && Number.isFinite(q.x) && Number.isFinite(q.y))) return false; let inside=false; for(let i=0,j=poly.length-1;i<poly.length;j=i++){if(((poly[i].y>p.y)!==(poly[j].y>p.y)) && (p.x<(poly[j].x-poly[i].x)*(p.y-poly[i].y)/(poly[j].y-poly[i].y)+poly[i].x))inside=!inside;} return inside; };
+            editor.isPointInPolygon = (p, poly) => { if (!Array.isArray(poly) || !poly.every(q => q && Number.isFinite(q.x) && Number.isFinite(q.y))) return false; if(poly.length===1)return Math.hypot(p.x-poly[0].x,p.y-poly[0].y)<=24/state.transform.a; let inside=false; for(let i=0,j=poly.length-1;i<poly.length;j=i++){if(((poly[i].y>p.y)!==(poly[j].y>p.y)) && (p.x<(poly[j].x-poly[i].x)*(p.y-poly[i].y)/(poly[j].y-poly[i].y)+poly[i].x))inside=!inside;} return inside; };
             editor.getPolygonCentroid = pts => { if(!pts||pts.length===0)return{x:0,y:0}; let x=0,y=0,a=0;for(let i=0;i<pts.length;i++){const p1=pts[i],p2=pts[(i+1)%pts.length],c=p1.x*p2.y-p2.x*p1.y;a+=c;x+=(p1.x+p2.x)*c;y+=(p1.y+p2.y)*c;} const f=a/2; return f===0?pts[0]:{x:x/(6*f),y:y/(6*f)}; };
-            editor.getWorldCoords = e => { const rect=editor.canvas.getBoundingClientRect(); return state.transform.inverse().transformPoint({x:e.clientX-rect.left,y:e.clientY-rect.top}); };
+            editor.getWorldCoords = e => {
+                const rect=editor.canvas.getBoundingClientRect();
+                const point=state.transform.inverse().transformPoint({x:e.clientX-rect.left,y:e.clientY-rect.top});
+                return {x:point.x,y:point.y};
+            };
             // --- Event Listeners ---
             const bindEventListeners = () => {
                 actions.initStorageControls();
@@ -2849,7 +2873,7 @@ ui.showPage = pageId => {
                 document.getElementById('new-eintrag-form').addEventListener('submit', actions.confirmNewEntry);
                 document.getElementById('btn-cancel-eintrag').addEventListener('click', ui.hideNewEintragModal);
                 document.getElementById('toggle-mode-btn').addEventListener('click', () => editor.setDrawingMode(!state.isDrawing));
-                document.getElementById('btn-finish-drawing').addEventListener('click', () => state.drawingPoints.length>=3 ? editor.finishDrawing() : ui.showToast("Mind. 3 Punkte setzen.","info"));
+                document.getElementById('btn-finish-drawing').addEventListener('click', () => state.drawingPoints.length>=1 ? editor.finishDrawing() : ui.showToast("Bitte einen Punkt setzen.","info"));
                 document.getElementById('btn-zoom-in').addEventListener('click', () => { const r=editor.canvas.getBoundingClientRect(); editor.zoom(1.3, r.width/2, r.height/2); });
                 document.getElementById('btn-zoom-out').addEventListener('click', () => { const r=editor.canvas.getBoundingClientRect(); editor.zoom(1/1.3, r.width/2, r.height/2); });
                 document.getElementById('btn-fit-to-screen').addEventListener('click', () => { editor.setupCanvas(); ui.showToast("Bild angepasst","info"); });
