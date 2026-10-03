@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dokumark-cache-v10-20261003-drawing';
+const CACHE_NAME = 'dokumark-cache-v10-20261003-pdf-local';
 const urlsToCache = [
   './DokuMark.html',
   './manifest.json',

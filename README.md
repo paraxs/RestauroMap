@@ -23,7 +23,7 @@ Bestehende Flächenmarkierungen aus älteren Versionen bleiben erhalten. Neue Ma
 ## Starten
 
 1. Dieses Repository über **Code → Download ZIP** herunterladen und entpacken oder mit Git klonen.
-2. `DokuMark.html` im Browser öffnen. Die mitgelieferten Dateien und ihre Ordnerstruktur beibehalten, insbesondere `jspdf.umd.min.js` für den PDF-Export.
+2. `DokuMark.html` im Browser öffnen. Für die PWA die mitgelieferten Dateien und ihre Ordnerstruktur beibehalten. Die PDF-Bibliothek ist direkt in der HTML-Datei enthalten; der PDF-Export einer lokalen Datei benötigt keine Internetverbindung.
 3. Ein Projekt anlegen und ein Übersichtsbild auswählen.
 
 Ein Build-Schritt, ein Benutzerkonto und ein Anwendungsserver sind für die grundlegende Nutzung nicht erforderlich. Benötigt wird ein Browser mit Unterstützung für IndexedDB, Canvas und Pointer Events.
@@ -79,7 +79,7 @@ Vor der Archivierung wird die Projektdatei mit derselben Datenprüfung wie beim 
 - Ungültige Punkte und Flächen werden vor dem Speichern oder Import abgewiesen. Problematische Altbereiche bleiben erhalten und bieten in der Bereichsliste **Punkt neu setzen** als gezielte Reparatur an; ihre Fotos und Notizen bleiben bestehen.
 - Für den Import gilt eine Dateigrenze von **256 MiB** sowie weitere Schutzgrenzen für Datensätze, Texte, Bilder und Geometrien. Der verfügbare Browserspeicher und Arbeitsspeicher können die praktische Größe zusätzlich begrenzen.
 - Kamera, Datei-Freigabe, Geräteordner und PWA-Installation sind browserabhängig.
-- Die PDF-Bibliothek wird bevorzugt aus der mitgelieferten Datei geladen. Fehlt sie, versucht die Anwendung einen CDN-Fallback, der eine Internetverbindung benötigt.
+- PDF-Berichte werden im ausdrücklich gewählten Geräteordner gespeichert und zurückgelesen. Ohne Ordner oder bei einem Schreibfehler wird der Bericht zum Herunterladen oder Teilen angeboten. Welche Speicherziele verfügbar sind, bestimmt der Browser.
 - Eine heruntergeladene HTML-Datei aktualisiert sich nicht automatisch. Vor einem Versions- oder Browserwechsel den Bestand als JSON sichern und anschließend die aktuelle Startdatei verwenden.
 
 ## Technischer Aufbau
@@ -89,7 +89,7 @@ Die Anwendung verwendet HTML, CSS und JavaScript ohne Framework. IndexedDB verwa
 | Datei / Ordner | Aufgabe |
 | --- | --- |
 | `DokuMark.html` | Aktuelle Anwendung mit Oberfläche, Datenverwaltung und Exportfunktionen |
-| `jspdf.umd.min.js` | Lokale PDF-Bibliothek |
+| `jspdf.umd.min.js` | Mitgelieferte PDF-Bibliothek; zusätzlich direkt in der HTML-Datei eingebunden |
 | `manifest.json` | Name, Startadresse und Darstellung der PWA |
 | `sw.js` | Offline-Cache der Anwendung |
 | `icons/` | PWA-Symbole |
